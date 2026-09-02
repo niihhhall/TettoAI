@@ -34,8 +34,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onSuccess }) => {
         <div className="min-h-screen bg-bg-base flex items-center justify-center p-6">
             <div className="w-full max-w-md space-y-8 animate-in fade-in zoom-in duration-700">
                 <div className="text-center space-y-5">
-                    <div className="mx-auto w-14 h-14 rounded-2xl overflow-hidden shadow-lift">
-                        <img src="/logo.jpg" alt="CodeVerity logo" className="w-full h-full object-cover" />
+                    <div className="mx-auto w-14 h-14 rounded-2xl shadow-lift bg-gradient-to-br from-brand to-brand-dark flex items-center justify-center text-white font-extrabold text-lg tracking-tight">
+                        CV
                     </div>
                     <h1 className="text-3xl font-bold text-ink tracking-tight">
                         Code<span className="text-brand">Verity</span>
