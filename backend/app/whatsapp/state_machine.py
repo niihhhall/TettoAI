@@ -77,6 +77,13 @@ class StateMachine:
         # Every inbound (re)opens the 24h WhatsApp window — record before anything else.
         await self.repo.record_inbound(phone)
 
+        # Demo restart: typing "demo" (or "restart"/"reset") from any state wipes this
+        # number and starts over from onboarding (name -> company -> full flow). Lets an
+        # operator re-run the whole demo without any database reset.
+        if self._is_reset_keyword(inbound.body):
+            await self._demo_reset(phone)
+            return await self._onboard(inbound, phone)
+
         crew = await self.repo.get_crew_by_phone(phone)
         if crew is None:
             return await self._onboard(inbound, phone)
@@ -95,6 +102,21 @@ class StateMachine:
         }
         handler = handlers.get(session.current_state, self._on_jobsite)
         return await handler(inbound, crew, session)
+
+    # --- Demo restart keyword ----------------------------------------------------
+
+    _RESET_WORDS = {"demo", "restart", "reset", "start over", "start demo"}
+
+    @classmethod
+    def _is_reset_keyword(cls, text: str | None) -> bool:
+        return (text or "").strip().lower().strip(".!") in cls._RESET_WORDS
+
+    async def _demo_reset(self, phone: str) -> None:
+        """Forget this number so the flow starts fresh from onboarding (name prompt)."""
+        self._onboarding.pop(phone, None)
+        self._cancel_photo_timer(phone)
+        self._photo_hashes.pop(phone, None)
+        await self.repo.delete_crew_by_phone(phone)
 
     # --- State 0.5: onboarding ---------------------------------------------------
 

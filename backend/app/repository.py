@@ -21,6 +21,8 @@ class Repository(Protocol):
     async def get_crew_by_phone(self, phone: str) -> CrewMember | None: ...
     async def record_inbound(self, phone: str, at: datetime | None = None) -> None: ...
     async def create_crew_member(self, phone: str, full_name: str, company_id: UUID | None) -> CrewMember: ...
+    # Remove a crew member (and their sessions) so a demo can restart from onboarding.
+    async def delete_crew_by_phone(self, phone: str) -> bool: ...
     async def get_company_by_code(self, code: str) -> Company | None: ...
     async def get_company_by_id(self, company_id: UUID) -> Company | None: ...
     async def list_jobsites(self, company_id: UUID) -> list[Jobsite]: ...
@@ -109,6 +111,15 @@ class InMemoryRepository:
                           last_inbound_at=datetime.now(timezone.utc))
         self.crew[crew.crew_id] = crew
         return crew
+
+    async def delete_crew_by_phone(self, phone: str) -> bool:
+        crew = await self.get_crew_by_phone(phone)
+        if crew is None:
+            return False
+        for sid in [s.session_id for s in self.sessions.values() if s.crew_id == crew.crew_id]:
+            del self.sessions[sid]
+        del self.crew[crew.crew_id]
+        return True
 
     async def get_company_by_code(self, code: str) -> Company | None:
         code = code.strip().upper()
@@ -310,6 +321,13 @@ class PgRepository:
             phone, full_name, company_id,
         )
         return self._crew(row)
+
+    async def delete_crew_by_phone(self, phone: str) -> bool:
+        # inspection_sessions.crew_id has ON DELETE CASCADE, so sessions are removed too.
+        row = await self._pool.fetchrow(
+            "DELETE FROM crew_members WHERE phone_number = $1 RETURNING crew_id", phone
+        )
+        return row is not None
 
     async def get_company_by_code(self, code: str) -> Company | None:
         row = await self._pool.fetchrow(
