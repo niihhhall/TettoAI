@@ -1,0 +1,6 @@
+# Dev/test-only dependencies (not installed in production).
+-r requirements.txt
+
+pytest==8.3.4
+ruff==0.8.4
+fpdf2==2.8.2   # used by app/db/seed_demo_inspection.py to render a demo supplement PDF

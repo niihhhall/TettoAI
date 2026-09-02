@@ -1,0 +1,34 @@
+# ── Secrets (never commit) ─────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── Python (backend, modal_worker, spike) ──────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ── Node / frontend ────────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+.vite/
+*.log
+build_output.txt
+
+# ── Editor / OS ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# ── Kiro (commit steering + specs; ignore local-only state) ────────────
+# Steering and specs ARE version-controlled on purpose. Nothing under
+# .kiro is ignored today; add machine-local entries here if they appear.

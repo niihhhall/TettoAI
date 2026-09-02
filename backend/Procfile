@@ -1,0 +1,4 @@
+# Single worker for the demo: onboarding state and WebSocket fan-out are in-process.
+# Post-demo scaling to multiple workers requires the Redis-backed store (spec Phase 2, D3).
+web: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+release: python -m app.db.migrate

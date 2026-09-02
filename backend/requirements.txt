@@ -1,0 +1,29 @@
+# --- Web framework ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20        # REQUIRED: parse Twilio form-encoded webhooks (de-risk finding)
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# --- Database ---
+asyncpg==0.30.0                 # Neon Postgres async driver + pooling
+
+# --- Image QA (field-photo blur / exposure / duplicate detection, State 3) ---
+pillow==11.1.0
+
+# --- Local PDF fallback when Modal isn't configured ---
+fpdf2==2.8.2
+
+# --- Messaging / media / AI (used from Phase 2 onward) ---
+twilio==9.4.1                   # WhatsApp Content API
+httpx==0.28.1                   # authenticated Twilio->R2 streaming, geocoding
+boto3==1.35.90                  # Cloudflare R2 (S3-compatible)
+# Deepgram Nova-2 is called via its REST API over httpx (no SDK dependency).
+openai==1.59.4                  # Fireworks.ai OpenAI-compatible endpoint
+instructor==1.7.2               # structured LLM output + Pydantic enforcement
+
+# --- Auth ---
+PyJWT==2.10.1                   # operator session tokens (HS256). Hashing uses stdlib pbkdf2.
+
+# --- Utilities ---
+python-dotenv==1.0.1
