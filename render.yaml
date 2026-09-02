@@ -11,8 +11,9 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /healthz
-    # Ensure DB tables exist on every deploy (idempotent).
-    preDeployCommand: python -m app.db.migrate
+    # NOTE: pre-deploy commands need a paid Render plan. The Neon DB is already migrated,
+    # so no migration step runs here. If the schema changes later, run migrations manually
+    # (locally: `python -m app.db.migrate`, or via a paid plan's pre-deploy command).
     envVars:
       # --- Runtime (non-secret) ---
       - key: PYTHON_VERSION
