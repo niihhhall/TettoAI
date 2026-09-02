@@ -16,6 +16,8 @@ Flow:
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from app.models import CrewMember, InboundMessage, OutboundAction, State
 from app.repository import Repository
@@ -199,19 +201,24 @@ class StateMachine:
         if inbound.latitude is not None and inbound.longitude is not None:
             geo = await self.services.reverse_geocode(inbound.latitude, inbound.longitude)
             address = geo.get("address") or inbound.location_label or "the detected location"
+            city = geo.get("city")
+            municipal = f"{city} municipal roofing code (IRC R905)" if city else "Local municipal roofing code (IRC R905)"
             if session.job_id:
                 # Existing selected jobsite — correct/confirm its address from the real GPS.
-                fields = {"property_address": address}
-                if geo.get("city"):
-                    fields["city"] = geo["city"]
+                fields = {"property_address": address, "municipal_code_summary": municipal}
+                if city:
+                    fields["city"] = city
                 if geo.get("county"):
                     fields["county"] = geo["county"]
                 await self.repo.update_jobsite(session.job_id, **fields)
             elif crew.company_id:
-                # "New Jobsite" path — auto-create the jobsite from the confirmed GPS location.
+                # "New Jobsite" path — auto-create the jobsite from the confirmed GPS location,
+                # with a generated claim number and the municipal citation prefilled.
+                claim = f"CV-{datetime.now(timezone.utc):%y%m%d}-{uuid4().hex[:4].upper()}"
                 job = await self.repo.create_jobsite(
                     crew.company_id, property_address=address,
-                    city=geo.get("city"), county=geo.get("county"), zip_code=geo.get("zip_code"),
+                    city=city, county=geo.get("county"), zip_code=geo.get("zip_code"),
+                    claim_number=claim, municipal_code_summary=municipal,
                 )
                 await self.repo.update_session(session.session_id, job_id=job.job_id)
             return [OutboundAction(template="codeverity_location_confirm", variables={"1": address})]
@@ -549,6 +556,19 @@ class StateMachine:
     # --- State 6: bounty lock + PDF + CRM dispatch ------------------------------
 
     async def _submit(self, crew, session) -> list[OutboundAction]:
+        # Ensure evidence + line items exist even if the foreman skipped the closing voice
+        # note (extraction previously only ran on that note). Vision-caption the photos, then
+        # extract from the captions + any per-photo/closing notes so a package is never empty.
+        await self._caption_pending(session)
+        if not session.structured_line_items:
+            augmented = self._augment_transcript(session.transcription_text or "", session.photo_evidence)
+            if augmented.strip():
+                items = await self.services.extract_line_items(augmented)
+                items = self._link_evidence(items, session.photo_evidence)
+                if items:
+                    await self.repo.update_session(session.session_id, structured_line_items=items)
+                    session.structured_line_items = items
+
         job = await self._resolve_job(crew, session)
         citation = "Municipal code pending"
         if job:

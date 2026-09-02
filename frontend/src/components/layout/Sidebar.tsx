@@ -55,7 +55,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                 {/* Branding */}
                 <div className={`flex items-center gap-3 group cursor-pointer pt-7 pb-2 px-5 ${isCollapsed ? 'justify-center px-0' : ''}`}>
-                    <div className="w-10 h-10 rounded-xl shrink-0 bg-gradient-to-br from-brand to-brand-dark flex items-center justify-center text-white font-extrabold text-sm tracking-tight shadow-card group-hover:scale-105 transition-transform">
+                    <div className="w-10 h-10 rounded-xl shrink-0 bg-white border border-border flex items-center justify-center text-ink font-extrabold text-sm tracking-tight shadow-card group-hover:scale-105 transition-transform">
                         CV
                     </div>
                     {!isCollapsed && (
