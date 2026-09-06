@@ -18,6 +18,7 @@ from fastapi.responses import PlainTextResponse
 from app.config import get_settings
 from app.models import InboundMessage
 from app.routers.whatsapp import process
+from app.whatsapp.dedup import get_dedup
 
 router = APIRouter(prefix="/api/v1/whatsapp/meta", tags=["whatsapp-meta"])
 logger = logging.getLogger("codeverity")
@@ -121,6 +122,11 @@ async def webhook(request: Request, background: BackgroundTasks) -> Response:
         return Response(status_code=200)  # ack malformed bodies so Meta stops retrying
     inbound = parse_meta_inbound(body)
     if inbound is not None:
-        background.add_task(process, inbound)
+        # Meta is at-least-once: drop a re-delivered message id so the state machine
+        # (and its welcome/onboarding replies) only runs once per real message.
+        if get_dedup().check_and_mark(inbound.message_sid):
+            logger.info("Meta webhook: duplicate message %s ignored", inbound.message_sid)
+        else:
+            background.add_task(process, inbound)
     # Always 200 fast — Meta retries aggressively on non-2xx.
     return Response(status_code=200)

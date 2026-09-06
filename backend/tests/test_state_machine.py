@@ -241,3 +241,48 @@ def test_webhook_parses_button_payload_and_media():
     assert msg.button_payload == "confirm_address"
     assert msg.num_media == 1
     assert msg.media_urls == ["https://api.twilio.com/media/abc"]
+
+
+# --- Photo quiet-timer: real auto-advance path (regression: double-prompt glitch) -----
+
+def test_photo_quiet_timer_prompts_once_and_auto_advances(monkeypatch):
+    """Drive the REAL auto_advance quiet-timer (not _finish_photos directly).
+
+    Reproduces the field glitch: a foreman pauses between photos, the timer fires and nudges,
+    then the next photo re-arms the timer. Before the fix this sent a SECOND "add more /
+    continue" prompt ("added 1..." then "added 2..."). The guarantees under test:
+      * exactly ONE codeverity_photos_done prompt is sent across the whole photo step, and
+      * the timer still auto-advances to VOICE on its own after the foreman truly stops.
+    """
+    import app.whatsapp.state_machine as sm_mod
+
+    # Shrink the windows so the timer fires in test time. GRACE is kept comfortably longer
+    # than QUIET so photo 2 reliably lands DURING the first prompt's grace window (the lull).
+    monkeypatch.setattr(sm_mod, "PHOTO_QUIET_SECONDS", 0.1)
+    monkeypatch.setattr(sm_mod, "PHOTO_GRACE_SECONDS", 0.4)
+
+    async def scenario():
+        repo = InMemoryRepository()
+        outbox = OutboxSender()
+        sm = StateMachine(repo, StubServices(), sender=outbox, auto_advance=True)
+
+        await sm.handle(inbound(body="hi"))
+        await sm.handle(inbound(payload="job_1"))
+        await sm.handle(inbound(latitude=32.78, longitude=-96.80))
+        await sm.handle(inbound(payload="confirm_address"))                     # -> PHOTOS
+
+        await sm.handle(inbound(num_media=1, media=["u1.jpg"], types=["image/jpeg"]))
+        await asyncio.sleep(0.25)   # > QUIET: the one-and-only prompt fires, enters grace
+        await sm.handle(inbound(num_media=1, media=["u2.jpg"], types=["image/jpeg"]))  # mid-lull
+        await asyncio.sleep(0.9)    # let the re-armed timer run QUIET+GRACE and auto-advance
+
+        prompts = [m for m in outbox.outbox if m.content_sid and "photos_done" in m.content_sid]
+        assert len(prompts) == 1, f"expected exactly one photos_done prompt, got {len(prompts)}"
+
+        crew = await repo.get_crew_by_phone(KNOWN_E164)
+        session = await repo.get_active_session(crew.crew_id)
+        assert session.current_state == State.VOICE          # timer auto-advanced on its own
+        assert len(session.approved_photos) == 2
+        assert any(m.body and "all 2 photos received" in m.body.lower() for m in outbox.outbox)
+
+    run(scenario())

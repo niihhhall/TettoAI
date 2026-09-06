@@ -26,8 +26,12 @@ from app.whatsapp.client import OutboxSender, Sender
 
 # Photo-collection tuning (single-worker, in-memory timers). Move to a durable scheduler
 # when scaling to multiple workers (see spec: post-demo hardening).
-PHOTO_QUIET_SECONDS = 15     # quiet gap after the last photo before we nudge
-PHOTO_GRACE_SECONDS = 20     # extra grace after the nudge before auto-advancing
+# These windows must exceed how long a foreman naturally takes BETWEEN photos — walk to
+# the next slope, frame the shot, often record a voice note. At 15s the timer fired during
+# that normal pause, decided the foreman was "done" after one photo, and nudged; the next
+# photo then started a second cycle -> the "added 1... added 2" double-prompt glitch.
+PHOTO_QUIET_SECONDS = 40     # silent gap after the last photo/voice before we nudge once
+PHOTO_GRACE_SECONDS = 25     # extra grace after the nudge before auto-advancing
 PHOTO_MIN = 1               # minimum photos to proceed (demo=1; recommend 3 in prod)
 PHOTO_MAX = 8               # cap; hitting it auto-advances immediately
 
@@ -60,6 +64,10 @@ class StateMachine:
         # Per-phone photo batch state (single-worker, in-memory).
         self._photo_timers: dict[str, asyncio.Task] = {}
         self._photo_hashes: dict[str, list[int]] = {}
+        # Phones already sent the one-time "add more / continue" nudge for the current photo
+        # step. Guards against re-prompting on every lull between photos (the double-prompt
+        # glitch); cleared when the photo step is entered/left.
+        self._photo_prompted: set[str] = set()
         # Per-phone lock to serialize concurrent inbound webhooks (photo/voice races).
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -118,6 +126,7 @@ class StateMachine:
         self._onboarding.pop(phone, None)
         self._cancel_photo_timer(phone)
         self._photo_hashes.pop(phone, None)
+        self._photo_prompted.discard(phone)
         await self.repo.delete_crew_by_phone(phone)
 
     # --- State 0.5: onboarding ---------------------------------------------------
@@ -226,6 +235,7 @@ class StateMachine:
         if inbound.button_payload == "confirm_address":
             await self.repo.update_session(session.session_id, current_state=State.PHOTOS)
             self._photo_hashes.pop(normalize_phone(inbound.from_), None)
+            self._photo_prompted.discard(normalize_phone(inbound.from_))
             return [OutboundAction(text=(
                 "Address confirmed.\n\n"
                 "Please send your roof photos one at a time so we can review each one. "
@@ -290,6 +300,7 @@ class StateMachine:
             return [OutboundAction(text="Please send at least one photo before we continue.")]
         self._cancel_photo_timer(phone)
         self._photo_hashes.pop(phone, None)
+        self._photo_prompted.discard(phone)
         await self.repo.update_session(session.session_id, current_state=State.VOICE)
         return [OutboundAction(text=(
             f"All {len(session.approved_photos)} photos received. "
@@ -361,6 +372,7 @@ class StateMachine:
         if len(photos) >= PHOTO_MAX:
             self._cancel_photo_timer(phone)
             self._photo_hashes.pop(phone, None)
+            self._photo_prompted.discard(phone)
             await self.repo.update_session(session.session_id, current_state=State.VOICE)
             replies.append(OutboundAction(text=(
                 f"That is the maximum of {len(photos)} photos. "
@@ -452,12 +464,16 @@ class StateMachine:
             session = await self.repo.get_active_session(crew.crew_id) if crew else None
             if not session or session.current_state != State.PHOTOS:
                 return
-            # After the quiet gap with no new photo/voice, send ONE button prompt so the
-            # foreman can add more or continue without typing.
-            n = len(session.approved_photos)
-            self.sender.send_template(
-                f"whatsapp:{phone}", "codeverity_photos_done", {"1": str(n)},
-            )
+            # Send the "add more / continue" button prompt AT MOST ONCE per photo step. Each
+            # new photo re-arms this countdown; without the guard, every lull between photos
+            # re-sent the prompt with a fresh count ("added 1..." then "added 2..."). After
+            # the single nudge we stay silent but STILL auto-advance once they truly stop.
+            if phone not in self._photo_prompted:
+                self._photo_prompted.add(phone)
+                n = len(session.approved_photos)
+                self.sender.send_template(
+                    f"whatsapp:{phone}", "codeverity_photos_done", {"1": str(n)},
+                )
             await asyncio.sleep(PHOTO_GRACE_SECONDS)
             await self._finish_photos(phone)
         except asyncio.CancelledError:
@@ -486,6 +502,7 @@ class StateMachine:
         await self.repo.update_session(session.session_id, current_state=State.VOICE)
         self._cancel_photo_timer(phone)
         self._photo_hashes.pop(phone, None)
+        self._photo_prompted.discard(phone)
         self.sender.send_text(
             to, f"All {n} photos received. Please record one closing voice note describing "
             "the overall scope of work.")
@@ -497,6 +514,7 @@ class StateMachine:
         if any((ct or "").startswith("image") for ct in inbound.media_content_types):
             await self.repo.update_session(session.session_id, current_state=State.PHOTOS)
             session.current_state = State.PHOTOS
+            self._photo_prompted.discard(normalize_phone(inbound.from_))
             return await self._on_photos(inbound, crew, session)
         if inbound.num_media > 0:
             audio = await self.services.store_media(inbound.media_urls[0], inbound.media_content_types[0])

@@ -8,9 +8,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response
 
+import logging
+
 from app.config import get_settings
 from app.deps import get_runtime
 from app.models import InboundMessage, OutboundAction
+from app.whatsapp.dedup import get_dedup
+
+logger = logging.getLogger("codeverity")
 
 router = APIRouter(prefix="/api/v1/whatsapp", tags=["whatsapp"])
 
@@ -87,5 +92,10 @@ async def webhook(request: Request, background: BackgroundTasks) -> Response:
     if not verify_twilio_signature(request, form):
         return Response(content="invalid signature", status_code=403)
     inbound = parse_inbound(form)
-    background.add_task(process, inbound)
+    # Twilio re-POSTs on any non-2xx/slow ACK; dedupe on MessageSid so a redelivered
+    # webhook doesn't drive the state machine (and its replies) a second time.
+    if get_dedup().check_and_mark(inbound.message_sid):
+        logger.info("Twilio webhook: duplicate message %s ignored", inbound.message_sid)
+    else:
+        background.add_task(process, inbound)
     return Response(content=EMPTY_TWIML, media_type="application/xml")
